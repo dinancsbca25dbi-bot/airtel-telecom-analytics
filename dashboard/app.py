@@ -1,8 +1,6 @@
 import os, sqlite3
 import gzip
 import tempfile
-import requests
-import re
 from pathlib import Path
 from string import Template
 import pandas as pd
@@ -96,33 +94,13 @@ def conn():
         temp_db = DB.with_suffix('.db.tmp')
         try:
             file_id = '1n0i2UU2U95sKEe28d7jYCl2Q0NJufwO3'
-            download_url = f'https://drive.google.com/uc?export=download&id={file_id}'
+            import gdown
+
             with tempfile.NamedTemporaryFile(prefix='airtel-download-', suffix='.gz', delete=False) as temp:
                 archive_path = Path(temp.name)
-                session = requests.Session()
-                response = session.get(download_url, stream=True, timeout=(20, 180))
-                confirmation = next((value for key, value in response.cookies.items()
-                                     if key.startswith('download_warning')), None)
-                if confirmation:
-                    response.close()
-                    response = session.get(download_url, params={'export': 'download', 'id': file_id,
-                                                                 'confirm': confirmation},
-                                           stream=True, timeout=(20, 180))
-                elif 'text/html' in response.headers.get('Content-Type', '').lower():
-                    page = response.text
-                    response.close()
-                    match = re.search(r'name=[\"\']confirm[\"\']\s+value=[\"\']([^\"\']+)', page)
-                    confirmation = match.group(1) if match else 't'
-                    response = session.get(download_url, params={'export': 'download', 'id': file_id,
-                                                                 'confirm': confirmation},
-                                           stream=True, timeout=(20, 180))
-                with response:
-                    response.raise_for_status()
-                    if 'text/html' in response.headers.get('Content-Type', '').lower():
-                        raise ValueError('Google Drive returned a sharing or confirmation page instead of the file.')
-                    for chunk in response.iter_content(chunk_size=1024 * 1024):
-                        if chunk:
-                            temp.write(chunk)
+            downloaded = gdown.download(id=file_id, output=str(archive_path), quiet=True, fuzzy=True)
+            if not downloaded:
+                raise ValueError('Google Drive did not return a downloadable file.')
             with archive_path.open('rb') as archive:
                 if archive.read(2) != b'\x1f\x8b':
                     raise ValueError('The Drive download is not a gzip file.')
@@ -143,7 +121,7 @@ def conn():
             if archive_path:
                 archive_path.unlink(missing_ok=True)
             temp_db.unlink(missing_ok=True)
-            st.error('Google Drive did not provide the database file. Check that its link opens the .gz download in a private browser window, then reboot this app.')
+            st.error('Google Drive did not provide the database file. Confirm the link is set to “Anyone with the link: Viewer” and that it downloads airtel.db.gz.')
             st.stop()
     c = sqlite3.connect(str(DB), check_same_thread=False)
     names = {r[0] for r in c.execute("select name from sqlite_master where type in ('table','view')")}
