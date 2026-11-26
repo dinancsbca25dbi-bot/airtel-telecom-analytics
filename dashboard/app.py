@@ -1,4 +1,7 @@
 import os, sqlite3
+import gzip
+import tempfile
+import requests
 from pathlib import Path
 from string import Template
 import pandas as pd
@@ -88,19 +91,37 @@ def empty(msg='No data for this filter.'): st.info(msg)
 @st.cache_resource
 def conn():
     if not DB.exists():
-        # Streamlit Cloud does not receive the local, git-ignored SQLite file.
-        # Rebuild the small set of tables used by this dashboard from tracked CSVs.
-        source = ROOT / 'data' / 'raw'
-        csv_tables = ('customers', 'circles', 'plans', 'recharges')
-        missing = [name for name in csv_tables if not (source / f'{name}.csv').exists()]
-        if missing:
-            st.error('Database and source CSV files are missing. Add these files to the repository: '
-                     + ', '.join(f'data/raw/{name}.csv' for name in missing))
+        archive_path = None
+        temp_db = DB.with_suffix('.db.tmp')
+        try:
+            file_id = '1n0i2UU2U95sKEe28d7jYCl2Q0NJufwO3'
+            download_url = f'https://drive.google.com/uc?export=download&id={file_id}'
+            with tempfile.NamedTemporaryFile(prefix='airtel-download-', suffix='.gz', delete=False) as temp:
+                archive_path = Path(temp.name)
+                with requests.get(download_url, stream=True, timeout=(20, 180)) as response:
+                    response.raise_for_status()
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            temp.write(chunk)
+            DB.parent.mkdir(parents=True, exist_ok=True)
+            with gzip.open(archive_path, 'rb') as compressed, temp_db.open('wb') as database:
+                while chunk := compressed.read(1024 * 1024):
+                    database.write(chunk)
+            archive_path.unlink(missing_ok=True)
+            with sqlite3.connect(f'file:{temp_db.resolve().as_posix()}?mode=ro', uri=True) as downloaded:
+                result = downloaded.execute('PRAGMA integrity_check').fetchone()[0]
+                names = {row[0] for row in downloaded.execute("select name from sqlite_master where type in ('table','view')")}
+            required = {'customers', 'circles', 'plans', 'recharges'}
+            if result != 'ok' or not required.issubset(names):
+                temp_db.unlink(missing_ok=True)
+                raise ValueError('The downloaded file is not a valid Airtel database.')
+            temp_db.replace(DB)
+        except Exception as exc:
+            if archive_path:
+                archive_path.unlink(missing_ok=True)
+            temp_db.unlink(missing_ok=True)
+            st.error('Could not download the database from Google Drive. Make sure General access is set to “Anyone with the link” as Viewer, then reboot the app.')
             st.stop()
-        DB.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(str(DB)) as build:
-            for name in csv_tables:
-                pd.read_csv(source / f'{name}.csv').to_sql(name, build, index=False, if_exists='replace')
     c = sqlite3.connect(str(DB), check_same_thread=False)
     names = {r[0] for r in c.execute("select name from sqlite_master where type in ('table','view')")}
     miss = {'customers', 'circles', 'plans', 'recharges'} - names
