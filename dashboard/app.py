@@ -2,6 +2,7 @@ import os, sqlite3
 import gzip
 import tempfile
 import requests
+import re
 from pathlib import Path
 from string import Template
 import pandas as pd
@@ -98,11 +99,33 @@ def conn():
             download_url = f'https://drive.google.com/uc?export=download&id={file_id}'
             with tempfile.NamedTemporaryFile(prefix='airtel-download-', suffix='.gz', delete=False) as temp:
                 archive_path = Path(temp.name)
-                with requests.get(download_url, stream=True, timeout=(20, 180)) as response:
+                session = requests.Session()
+                response = session.get(download_url, stream=True, timeout=(20, 180))
+                confirmation = next((value for key, value in response.cookies.items()
+                                     if key.startswith('download_warning')), None)
+                if confirmation:
+                    response.close()
+                    response = session.get(download_url, params={'export': 'download', 'id': file_id,
+                                                                 'confirm': confirmation},
+                                           stream=True, timeout=(20, 180))
+                elif 'text/html' in response.headers.get('Content-Type', '').lower():
+                    page = response.text
+                    response.close()
+                    match = re.search(r'name=[\"\']confirm[\"\']\s+value=[\"\']([^\"\']+)', page)
+                    confirmation = match.group(1) if match else 't'
+                    response = session.get(download_url, params={'export': 'download', 'id': file_id,
+                                                                 'confirm': confirmation},
+                                           stream=True, timeout=(20, 180))
+                with response:
                     response.raise_for_status()
+                    if 'text/html' in response.headers.get('Content-Type', '').lower():
+                        raise ValueError('Google Drive returned a sharing or confirmation page instead of the file.')
                     for chunk in response.iter_content(chunk_size=1024 * 1024):
                         if chunk:
                             temp.write(chunk)
+            with archive_path.open('rb') as archive:
+                if archive.read(2) != b'\x1f\x8b':
+                    raise ValueError('The Drive download is not a gzip file.')
             DB.parent.mkdir(parents=True, exist_ok=True)
             with gzip.open(archive_path, 'rb') as compressed, temp_db.open('wb') as database:
                 while chunk := compressed.read(1024 * 1024):
@@ -120,7 +143,7 @@ def conn():
             if archive_path:
                 archive_path.unlink(missing_ok=True)
             temp_db.unlink(missing_ok=True)
-            st.error('Could not download the database from Google Drive. Make sure General access is set to “Anyone with the link” as Viewer, then reboot the app.')
+            st.error('Google Drive did not provide the database file. Check that its link opens the .gz download in a private browser window, then reboot this app.')
             st.stop()
     c = sqlite3.connect(str(DB), check_same_thread=False)
     names = {r[0] for r in c.execute("select name from sqlite_master where type in ('table','view')")}
