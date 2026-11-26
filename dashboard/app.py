@@ -101,7 +101,7 @@ def conn():
             # gdown skips an output path that already exists; reserve a unique
             # name, then remove the empty placeholder before starting download.
             archive_path.unlink()
-            downloaded = gdown.download(id=file_id, output=str(archive_path), quiet=True, fuzzy=True)
+            downloaded = gdown.download(id=file_id, output=str(archive_path), quiet=True)
             if not downloaded:
                 raise ValueError('Google Drive did not return a downloadable file.')
             with archive_path.open('rb') as archive:
