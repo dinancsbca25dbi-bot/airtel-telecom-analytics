@@ -7,8 +7,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # ====================== AIRTEL | REVENUE COMMAND CENTER ======================
-DB = Path(os.environ.get('AIRTEL_DB', Path(__file__).resolve().parent.parent / 'data' / 'airtel.db'))
-LOGO = Path(os.environ.get('AIRTEL_LOGO', r'C:\Users\dinan\Downloads\Screenshot 2026-11-25 140541.png'))
+ROOT = Path(__file__).resolve().parent.parent
+DB = Path(os.environ.get('AIRTEL_DB', ROOT / 'data' / 'airtel.db'))
+LOGO = Path(os.environ.get('AIRTEL_LOGO', ROOT / 'dashboard' / 'airtel-logo.png'))
 YEAR = 2025
 MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']
 RED, TEAL, GOLD = '#E40000', '#00B894', '#F5A623'
@@ -25,8 +26,6 @@ THEMES = {
 with st.sidebar:
     if LOGO.exists():
         st.image(str(LOGO), width=150)
-    else:
-        st.caption(f'Logo not found at: {LOGO}')
     st.markdown('<div class="brand">airtel<span>.</span></div>'
                 '<p style="font-size:11px;letter-spacing:1px;color:#9CA3AF;margin:0 0 6px">REVENUE COMMAND CENTER</p>',
                 unsafe_allow_html=True)
@@ -89,7 +88,19 @@ def empty(msg='No data for this filter.'): st.info(msg)
 @st.cache_resource
 def conn():
     if not DB.exists():
-        st.error(f'Database not found: {DB}'); st.stop()
+        # Streamlit Cloud does not receive the local, git-ignored SQLite file.
+        # Rebuild the small set of tables used by this dashboard from tracked CSVs.
+        source = ROOT / 'data' / 'raw'
+        csv_tables = ('customers', 'circles', 'plans', 'recharges')
+        missing = [name for name in csv_tables if not (source / f'{name}.csv').exists()]
+        if missing:
+            st.error('Database and source CSV files are missing. Add these files to the repository: '
+                     + ', '.join(f'data/raw/{name}.csv' for name in missing))
+            st.stop()
+        DB.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(str(DB)) as build:
+            for name in csv_tables:
+                pd.read_csv(source / f'{name}.csv').to_sql(name, build, index=False, if_exists='replace')
     c = sqlite3.connect(str(DB), check_same_thread=False)
     names = {r[0] for r in c.execute("select name from sqlite_master where type in ('table','view')")}
     miss = {'customers', 'circles', 'plans', 'recharges'} - names

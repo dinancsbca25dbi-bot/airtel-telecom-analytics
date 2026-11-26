@@ -1,7 +1,13 @@
 data/raw/
+!data/raw/
+data/raw/*
 data/processed/
 *.db
 *.csv
+!data/raw/customers.csv
+!data/raw/circles.csv
+!data/raw/plans.csv
+!data/raw/recharges.csv
 .venv/
 _pycache_/
 .ipynb_checkpoints/
