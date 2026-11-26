@@ -98,6 +98,9 @@ def conn():
 
             with tempfile.NamedTemporaryFile(prefix='airtel-download-', suffix='.gz', delete=False) as temp:
                 archive_path = Path(temp.name)
+            # gdown skips an output path that already exists; reserve a unique
+            # name, then remove the empty placeholder before starting download.
+            archive_path.unlink()
             downloaded = gdown.download(id=file_id, output=str(archive_path), quiet=True, fuzzy=True)
             if not downloaded:
                 raise ValueError('Google Drive did not return a downloadable file.')
@@ -121,7 +124,7 @@ def conn():
             if archive_path:
                 archive_path.unlink(missing_ok=True)
             temp_db.unlink(missing_ok=True)
-            st.error('Google Drive did not provide the database file. Confirm the link is set to “Anyone with the link: Viewer” and that it downloads airtel.db.gz.')
+            st.error(f'Database download failed ({type(exc).__name__}: {exc}). Confirm the Drive link is “Anyone with the link: Viewer” and points to airtel.db.gz.')
             st.stop()
     c = sqlite3.connect(str(DB), check_same_thread=False)
     names = {r[0] for r in c.execute("select name from sqlite_master where type in ('table','view')")}
